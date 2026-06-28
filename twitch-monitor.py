@@ -22,7 +22,8 @@ def gql_query(ops):
         "Client-Session-Id": device_id[:16],
         "Content-Type": "application/json",
     }
-    client = httpx.Client(headers={"User-Agent": USER_AGENT}, verify=False, timeout=30)
+    client = httpx.Client(headers={"User-Agent": USER_AGENT},
+                          verify=False, http2=False, timeout=30)
     resp = client.post(GQL_URL, json=ops, headers=headers, timeout=60)
     client.close()
     if resp.status_code != 200:
@@ -36,8 +37,8 @@ def gql_query(ops):
 def get_channel_id(channel_name):
     ops = [{
         "operationName": "GetStreamInfo",
-        "variables": {"login": channel_name},
-        "extensions": {"persistedQuery": {"version": 1, "sha256Hash": "d5c5df4ab69fe1a03e46b795c99ae8a3fe23dea7e2e6ff18143e909a31e23699"}}
+        "query": "query GetStreamInfo($login: String!) { user(login: $login) { id } }",
+        "variables": {"login": channel_name}
     }]
     result = gql_query(ops)
     if result and len(result) > 0:
@@ -48,8 +49,8 @@ def get_channel_id(channel_name):
 def get_drops_campaigns(channel_id):
     ops = [{
         "operationName": "ChannelDropsCampaigns",
-        "variables": {"channelID": channel_id},
-        "extensions": {"persistedQuery": {"version": 1, "sha256Hash": "fc300a8a0d30c710b4e4df5693ebdbfc158fd8e011e503a0e63b656eac869496"}},
+        "query": "query ChannelDropsCampaigns($channelID: String!) { channelDropCampaigns(channelID: $channelID) { id name game { id name } startAt endAt rewardGroups { id name rewards { id name } progressCriteria { requirements { minutesWatched } } } } }",
+        "variables": {"channelID": channel_id}
     }]
     result = gql_query(ops)
     return result[0].get("data", {}) if (result and len(result) > 0) else {}
