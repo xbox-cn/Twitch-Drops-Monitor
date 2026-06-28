@@ -240,7 +240,7 @@ def format_drops_info(drops_data, seen=None):
                     key = f"{name}::{rn}"
                     if key not in seen:
                         tag = " [NEW]"
-                        new_items.append(f"{name} -> {rn} ({required_min}min)")
+                        new_items.append(f"{name} -> {rn} ({required_min}min){time_str}")
                         break
 
                 lines.append(f"    * {name}{game_str}{time_str}{reward_str}  {pct_line}{tag}")
@@ -277,7 +277,7 @@ def format_drops_info(drops_data, seen=None):
                     key = f"{name}::{rn}"
                     if key not in seen:
                         tag = " [NEW]"
-                        new_items.append(f"{name} -> {rn} ({required_min}min)")
+                        new_items.append(f"{name} -> {rn} ({required_min}min){time_str}")
                         break
 
                 lines.append(f"    * {name}{game_str}{time_str}{reward_str}  {pct_line}{tag}")
