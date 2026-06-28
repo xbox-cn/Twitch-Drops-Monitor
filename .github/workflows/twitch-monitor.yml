@@ -32,12 +32,16 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add seen_drops.json
-          if git diff --cached --quiet; then
-            echo "No changes to seen_drops.json"
+          if [ -f seen_drops.json ]; then
+            git add seen_drops.json
+            if git diff --cached --quiet; then
+              echo "No changes to seen_drops.json"
+            else
+              git commit -m "update seen_drops.json"
+              git push
+            fi
           else
-            git commit -m "update seen_drops.json"
-            git push
+            echo "seen_drops.json not created (no drops data)"
           fi
 
       - name: Notify new drops
