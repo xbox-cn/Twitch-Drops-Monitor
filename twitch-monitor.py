@@ -6,6 +6,7 @@ import sys
 
 # ========== 配置 ==========
 CHANNEL_NAME = "adnogpu"
+SEEN_FILE = "seen_drops.json"
 
 CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"
 CLIENT_VERSION = "a54467d0-815e-46db-b05d-1b4c6ac650b2"
@@ -112,6 +113,59 @@ def get_stream_info(client, auth_token, device_id, client_integrity, channel_nam
     return result[0].get("data", {}).get("user", {}), status
 
 
+# ========== 已见掉宝持久化 ==========
+
+def load_seen_drops():
+    if not os.path.exists(SEEN_FILE):
+        return set()
+    try:
+        with open(SEEN_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return set(data)
+    except Exception:
+        pass
+    return set()
+
+
+def save_seen_drops(seen):
+    with open(SEEN_FILE, "w", encoding="utf-8") as f:
+        json.dump(sorted(seen), f, ensure_ascii=False, indent=2)
+
+
+def collect_drop_keys(drops_data):
+    keys = set()
+    progress_list = drops_data.get("channelDropCampaignsProgress")
+    if isinstance(progress_list, list):
+        for camp in progress_list:
+            if not isinstance(camp, dict):
+                continue
+            camp_name = camp.get("name", "")
+            for rg in camp.get("rewardGroups", []):
+                if not isinstance(rg, dict):
+                    continue
+                for r in rg.get("rewards", []):
+                    if isinstance(r, dict) and r.get("name"):
+                        keys.add(f"{camp_name}::{r['name']}")
+    channel_campaigns = drops_data.get("channelDropCampaigns", [])
+    if isinstance(channel_campaigns, list):
+        for camp in channel_campaigns:
+            if not isinstance(camp, dict):
+                continue
+            camp_name = camp.get("name", "")
+            for rg in camp.get("rewardGroups", []):
+                if not isinstance(rg, dict):
+                    continue
+                for r in rg.get("rewards", []):
+                    if isinstance(r, dict) and r.get("name"):
+                        keys.add(f"{camp_name}::{r['name']}")
+    return keys
+
+
+def is_new_drop(camp_name, reward_name, seen):
+    return f"{camp_name}::{reward_name}" not in seen
+
+
 # ========== 挂宝 (Drops) 查询 ==========
 
 def get_channel_drops_campaigns(client, auth_token, device_id, client_integrity, channel_id):
@@ -134,11 +188,14 @@ def get_drops_progress(client, auth_token, device_id, client_integrity, channel_
     return result[0].get("data", {}) if (result and len(result) > 0) else {}
 
 
-def format_drops_info(drops_data):
+def format_drops_info(drops_data, seen=None):
+    if seen is None:
+        seen = set()
     if not drops_data:
-        return ["  (无挂宝数据)"]
+        return ["  (无挂宝数据)"], []
 
     lines = []
+    new_items = []
 
     progress_list = drops_data.get("channelDropCampaignsProgress")
     if isinstance(progress_list, list) and len(progress_list) > 0:
@@ -176,7 +233,17 @@ def format_drops_info(drops_data):
 
                 game_str = f" [{game_name}]" if game_name else ""
                 time_str = f" ({start[:10]}{time_range})" if start else ""
-                lines.append(f"    * {name}{game_str}{time_str}{reward_str}  {pct_line}")
+
+                # 检查是否为新掉宝
+                tag = ""
+                for rn in rewards:
+                    key = f"{name}::{rn}"
+                    if key not in seen:
+                        tag = " [NEW]"
+                        new_items.append(f"{name} -> {rn} ({required_min}min)")
+                        break
+
+                lines.append(f"    * {name}{game_str}{time_str}{reward_str}  {pct_line}{tag}")
     else:
         channel_campaigns = drops_data.get("channelDropCampaigns", [])
         if isinstance(channel_campaigns, list):
@@ -204,11 +271,20 @@ def format_drops_info(drops_data):
                 pct_line = f"0/{required_min}min" if required_min else ""
                 game_str = f" [{game_name}]" if game_name else ""
                 time_str = f" ({start[:10]}{time_range})" if start else ""
-                lines.append(f"    * {name}{game_str}{time_str}{reward_str}  {pct_line}")
+
+                tag = ""
+                for rn in rewards_list:
+                    key = f"{name}::{rn}"
+                    if key not in seen:
+                        tag = " [NEW]"
+                        new_items.append(f"{name} -> {rn} ({required_min}min)")
+                        break
+
+                lines.append(f"    * {name}{game_str}{time_str}{reward_str}  {pct_line}{tag}")
 
     if not lines:
         lines.append("  (暂无可用挂宝)")
-    return lines
+    return lines, new_items
 
 
 # ========== 主流程 ==========
@@ -218,6 +294,9 @@ def main():
     if not accounts:
         print("[!] 环境变量 TWITCH_COOKIES 中没有可用的 cookie")
         sys.exit(1)
+
+    seen = load_seen_drops()
+    all_new_items = []
 
     print(f"[*] 频道: {CHANNEL_NAME} | 账号数: {len(accounts)}")
     print("=" * 60)
@@ -282,13 +361,40 @@ def main():
                 drops_data = get_drops_progress(client, auth_token, device_id, ci or "", channel_id)
                 if not drops_data.get("channelDropCampaignsProgress"):
                     drops_data = get_channel_drops_campaigns(client, auth_token, device_id, ci or "", channel_id)
-                for line in format_drops_info(drops_data):
+                lines, new_items = format_drops_info(drops_data, seen)
+                for line in lines:
                     print(line)
+                all_new_items.extend(new_items)
             except Exception as e:
                 print(f"    查询失败: {e}")
 
         client.close()
         print("-" * 60)
+
+    # 去重后更新已见列表
+    if all_new_items:
+        current_keys = set()
+        # 重新收集所有当前掉宝的 key（因为可能多个账号查到相同结果）
+        # 直接用 all_new_items 中的 key 更新 seen
+        for item in all_new_items:
+            camp, rest = item.split(" -> ", 1)
+            reward = rest.split(" (")[0] if " (" in rest else rest
+            seen.add(f"{camp}::{reward}")
+        save_seen_drops(seen)
+
+        print("=" * 60)
+        print("[NEW DROPS] 检测到新掉宝:")
+        for item in set(all_new_items):
+            print(f"  {item}")
+
+        # 写标记文件供 workflow 推送
+        with open("new_drops.txt", "w", encoding="utf-8") as f:
+            f.write("\n".join(sorted(set(all_new_items))))
+    else:
+        # 无新掉宝时清空标记文件
+        if os.path.exists("new_drops.txt"):
+            os.remove("new_drops.txt")
+        print("\n[+] 无新掉宝")
 
 
 if __name__ == "__main__":
